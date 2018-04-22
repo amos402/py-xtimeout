@@ -1,0 +1,30 @@
+from setuptools import setup, find_packages, Extension
+from setuptools.command.build_ext import build_ext
+
+with open('README.md', encoding='utf8') as f:
+    long_description = f.read()
+
+setup(
+    name='pymonitor',
+    version='0.1',
+    description='Trace a timeout function call and handle with it',
+    long_description=long_description,
+    author='amos402',
+    author_email='amos_402@msn.com',
+    url='https://github.com/amos402/pymonitor',
+    keywords=['timeout', 'inject', 'timeout handler', 'function call'],
+    license='MIT',
+    packages=find_packages('src'),
+    package_dir={'': 'src'},
+    py_modules=['pymonitor'],
+    ext_modules=[
+        Extension('_pymonitor', ['src/_pymonitor.cpp'])
+    ],
+    test_suite='tests',
+    classifiers=[
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: C++',
+        'Programming Language :: Python :: 3 :: Only',
+        'Programming Language :: Python',
+    ]
+)
