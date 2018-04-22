@@ -5,6 +5,11 @@
 * 超时回调和原函数在同一线程上
 * 支持多线程, 支持嵌套使用
 
+## 安装
+```
+pip install xtimeout
+```
+
 ## 使用
 ```python
 def on_timeout(start_time: float):

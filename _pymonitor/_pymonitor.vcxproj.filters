@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\_pymonitor.cpp">
+    <ClCompile Include="..\xtimeout\_xtimeout.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

@@ -4,7 +4,7 @@ import threading
 import time
 import unittest
 
-import pymonitor
+import xtimeout
 
 
 def busy(seconds):
@@ -25,7 +25,7 @@ class TestMonitor(unittest.TestCase):
 			called = True
 
 		called = False
-		with pymonitor.check_context(10, on_timout):
+		with xtimeout.check_context(10, on_timout):
 			busy(0.1)
 		self.assertTrue(called)
 
@@ -46,12 +46,12 @@ class TestMonitor(unittest.TestCase):
 		count = 0
 
 		start = time.process_time()
-		with pymonitor.check_context(50, on_timeout_1):
+		with xtimeout.check_context(50, on_timeout_1):
 			start1 = time.clock()
 			while time.clock() - start1 < 0.1:
 				for i in range(2):
 					start2 = time.clock()
-					with pymonitor.check_context(10, on_timeout_2):
+					with xtimeout.check_context(10, on_timeout_2):
 						busy(0.1)
 
 		self.assertEqual(count, 2)
@@ -63,14 +63,14 @@ class TestMonitor(unittest.TestCase):
 			raise TimeoutError
 
 		with self.assertRaises(TimeoutError):
-			with pymonitor.check_context(50, on_timeout):
+			with xtimeout.check_context(50, on_timeout):
 				busy(0.1)
 
 	def test_decorator(self):
 		def on_timeout(start_time):
 			raise Exception("Timeout")
 
-		@pymonitor.check_time(10, on_timeout)
+		@xtimeout.check_time(10, on_timeout)
 		def func():
 			busy(1)
 
@@ -84,7 +84,7 @@ class TestMonitor(unittest.TestCase):
 
 		def thfunc():
 			with self.assertRaises(TimeoutError):
-				with pymonitor.check_context(50, on_timeout):
+				with xtimeout.check_context(50, on_timeout):
 					busy(0.1)
 
 		th = threading.Thread(target=thfunc)
@@ -97,7 +97,7 @@ class TestMonitor(unittest.TestCase):
 			count += 1
 		count = 0
 		def thfunc():
-			with pymonitor.check_context(50, on_timeout):
+			with xtimeout.check_context(50, on_timeout):
 				busy(0.1)
 		ths = []
 		for i in range(4):

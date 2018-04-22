@@ -1,8 +1,8 @@
 import functools
 
-from _pymonitor import Injector
+from _xtimeout import Injector
 
-__version__ = "0.1"
+__version__ = "0.1.2"
 __all__ = ["check_context", "check_time", "Injector"]
 
 
