@@ -414,7 +414,10 @@ protected:
                 }
 
                 Merge();
-
+                if (m_CallMap.empty())
+                {
+                    m_Running = false;
+                }
                 auto endTime = ClockType::now();
                 if (minSpan - (endTime - startTime) > INTERVAL_RESOLUTION)
                 {
@@ -458,10 +461,6 @@ protected:
         }
         m_NewVect.clear();
 
-        if (m_CallMap.empty())
-        {
-            m_Running = false;
-        }
     }
 
 private:
@@ -539,6 +538,7 @@ static PyObject* InjectorStart(PyObject* self, PyObject* args)
 {
     auto pyInjector = reinterpret_cast<PyInjector*>(self);
     auto& injector = pyInjector->injector;
+    injector->RecordStartTime();
     CContextHelper::Instance().Start(injector);
     Py_RETURN_NONE;
 }
