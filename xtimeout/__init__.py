@@ -2,7 +2,7 @@ import functools
 
 from _xtimeout import Injector
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __all__ = ["check_context", "check_time", "Injector"]
 
 
