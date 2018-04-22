@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <memory>
 #include <chrono>
+#include <functional>
 
 #include <thread>
 #include <mutex>
@@ -15,6 +16,7 @@
 #include <atomic>
 
 #include <time.h>
+#include <climits>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -383,14 +385,14 @@ protected:
 #endif // WIN32
             do
             {
-                std::chrono::nanoseconds minSpan(MAXLONGLONG);
+                std::chrono::nanoseconds minSpan(LLONG_MAX);
                 auto startTime = ClockType::now();
                 // TODO: use interval merge for optimization
                 for (auto iter = m_CallMap.begin(); iter != m_CallMap.end();)
                 {
                     auto& injector = iter->second;
                     auto span = ClockType::now() - injector->GetStartTime();
-                    auto& duration = injector->GetDuration();
+                    const auto& duration = injector->GetDuration();
 
                     if (span > duration)
                     {
