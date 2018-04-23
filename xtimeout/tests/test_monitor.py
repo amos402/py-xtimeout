@@ -1,11 +1,20 @@
 import functools
 import random
-import threading
+import sys
 import time
 import unittest
 
 import xtimeout
 
+try:
+    import _thread
+    thread_enabled = True
+    del _thread
+except ImportError:
+    thread_enabled = False
+
+if thread_enabled:
+    import threading
 
 def busy(seconds):
     if seconds == -1:
@@ -30,7 +39,7 @@ class TestMonitor(unittest.TestCase):
             with xtimeout.check_context(200, on_timeout):
                 busy(-1)
         elapsed = time.time() - start
-        self.assertTrue(0.2 <= elapsed < 0.25)
+        self.assertAlmostEqual(elapsed, 0.2, delta=0.05)
 
     def test_with(self):
         def on_timout(start_time):
@@ -91,6 +100,26 @@ class TestMonitor(unittest.TestCase):
             func()
         self.assertEqual(context.exception.args[0], "Timeout")
 
+    def test_trace_recover(self):
+        def dummy_trace(*args):
+            pass
+
+        def on_timeout(start_time):
+            self.assertEqual(sys.gettrace(), dummy_trace)
+            raise TimeoutError
+
+        old_trace = sys.gettrace()
+        sys.settrace(dummy_trace)
+        try:
+            with self.assertRaises(TimeoutError):
+                with xtimeout.check_context(50, on_timeout):
+                    busy(-1)
+        finally:
+            sys.settrace(old_trace)
+
+
+@unittest.skipIf(not thread_enabled, "no threading")
+class TestMultiThread(unittest.TestCase):
     def test_child_thread(self):
         def on_timeout(start_time):
             raise TimeoutError
@@ -102,8 +131,7 @@ class TestMonitor(unittest.TestCase):
 
         th = threading.Thread(target=thfunc)
         th.start()
-        while th.is_alive():
-            pass
+        th.join()
 
     def test_multi_threads(self):
         def on_timeout(start_time):
@@ -122,9 +150,9 @@ class TestMonitor(unittest.TestCase):
             th.start()
             ths.append(th)
         for th in ths:
-            while th.is_alive():
-                pass
+            th.join()
         self.assertEqual(count, 4)
+
 
 if __name__ == "__main__":
     unittest.main()

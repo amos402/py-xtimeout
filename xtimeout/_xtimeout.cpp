@@ -27,7 +27,6 @@
 
 typedef std::chrono::steady_clock ClockType;
 static const auto INTERVAL_RESOLUTION = std::chrono::milliseconds(5);
-static const char* CAPSULE_NAME = "injector";
 
 static int g_PyTLSKey = -1;
 
@@ -92,20 +91,159 @@ private:
     PyThreadState* m_PrevState;
 };
 
+#ifdef WITH_THREAD
+class CGILHolder
+{
+public:
+    CGILHolder() : m_State(PyGILState_Ensure())
+    {
+    }
+
+    ~CGILHolder()
+    {
+        PyGILState_Release(m_State);
+    }
+
+private:
+    PyGILState_STATE m_State;
+};
+#endif // WITH_THREAD
+
+class CPyObjectHolder
+{
+public:
+    CPyObjectHolder() : m_Object(nullptr)
+    {
+    }
+
+    CPyObjectHolder(PyObject* object) : m_Object(object)
+    {
+    }
+
+    ~CPyObjectHolder()
+    {
+        Py_XDECREF(m_Object);
+    }
+
+    CPyObjectHolder(const CPyObjectHolder& rhs)
+    {
+        m_Object = rhs.m_Object;
+        Py_XINCREF(m_Object);
+    }
+
+    CPyObjectHolder& operator=(const CPyObjectHolder& rhs)
+    {
+        Py_XSETREF(m_Object, rhs.m_Object);
+        return *this;
+    }
+
+    CPyObjectHolder(CPyObjectHolder&& rhs)
+    {
+        m_Object = rhs.m_Object;
+        rhs.m_Object = nullptr;
+    }
+
+    CPyObjectHolder& operator=(CPyObjectHolder&& rhs)
+    {
+        if (this == &rhs)
+        {
+            return *this;
+        }
+        m_Object = rhs.m_Object;
+        rhs.m_Object = nullptr;
+        return *this;
+    }
+
+    PyObject* operator->() const
+    {
+        return m_Object;
+    }
+
+    PyObject& operator*() const
+    {
+        return *m_Object;
+    }
+
+    operator PyObject*()
+    {
+        return m_Object;
+    }
+
+    constexpr operator bool() const
+    {
+        return m_Object != nullptr;
+    }
+
+    bool operator==(const CPyObjectHolder& rhs)
+    {
+        return m_Object == rhs.m_Object;
+    }
+
+    bool operator !() const
+    {
+        return !operator bool();
+    }
+
+    bool operator==(PyObject* op)
+    {
+        return m_Object == op;
+    }
+
+    PyObject* Get() const
+    {
+        return m_Object;
+    }
+
+private:
+    PyObject* m_Object;
+};
+
 
 class CLocalInjector
 {
 private:
     using TimePoint = std::chrono::time_point<ClockType>;
 
-    struct TArgWrapper
+    class CArgWrapper
     {
-        TArgWrapper(const std::shared_ptr<CLocalInjector>& obj)
-            : self(obj)
+    private:
+        CArgWrapper(const std::shared_ptr<CLocalInjector>& obj)
+            : injector(obj), tracefunc(nullptr)
         {
         }
 
-        std::shared_ptr<CLocalInjector> self;
+        ~CArgWrapper()
+        {
+        }
+
+    public:
+        std::shared_ptr<CLocalInjector> injector;
+        Py_tracefunc tracefunc;
+        CPyObjectHolder pyTraceobj;
+        CPyObjectHolder pyStartTime;
+
+        static CArgWrapper* Create(const std::shared_ptr<CLocalInjector>& obj)
+        {
+            return new CArgWrapper(obj);
+        }
+
+        static CArgWrapper* RestoreFromCapsule(PyObject* obj)
+        {
+            return static_cast<CArgWrapper*>(PyCapsule_GetPointer(obj, "ArgWrapper"));
+        }
+
+        CPyObjectHolder CreateCapsule()
+        {
+            return PyCapsule_New(this, "ArgWrapper", OnReleaseCapsule);
+        }
+
+    private:
+        static void OnReleaseCapsule(PyObject* obj)
+        {
+            auto _this = static_cast<CArgWrapper*>(
+                PyCapsule_GetPointer(obj, "ArgWrapper"));
+            delete _this;
+        }
     };
 
 public:
@@ -148,11 +286,7 @@ public:
     void Release()
     {
         m_IsValid = false;
-        if (m_Callback)
-        {
-            Py_DECREF(m_Callback);
-            m_Callback = nullptr;
-        }
+        Py_CLEAR(m_Callback);
     }
 
     bool IsValid() const
@@ -163,53 +297,47 @@ public:
     static void Call(const std::shared_ptr<CLocalInjector>& injector)
     {
         // wrap a injector ptr to keep its reference count
-        auto wrapper = new TArgWrapper(injector);
-        PyObject* capsule = PyCapsule_New(wrapper, CAPSULE_NAME, DeleteCapsule);
-
+        auto wrapper = CArgWrapper::Create(injector);
         double startTime = _PyTime_AsSecondsDouble(
             injector->m_StartTime.time_since_epoch().count());
-        PyObject* pyStartTime = PyFloat_FromDouble(startTime);
-        PyObject* t = PyTuple_Pack(2, capsule, pyStartTime);
-
         injector->m_ThState.SwapState();
-        PyEval_SetTrace(OnTrace, t);
-        injector->m_ThState.RestoreState();
 
-        Py_DECREF(capsule);
-        Py_DECREF(t);
-        Py_DECREF(pyStartTime);
+        auto state = PyThreadState_GET();
+        wrapper->tracefunc = state->c_tracefunc;
+        Py_XINCREF(state->c_traceobj);
+        wrapper->pyTraceobj = state->c_traceobj;
+        wrapper->pyStartTime = PyFloat_FromDouble(startTime);
+
+        const auto capsule = wrapper->CreateCapsule();
+        if (!capsule)
+        {
+            Py_FatalError("Create capsule failed");
+        }
+        PyEval_SetTrace(OnTrace, capsule.Get());
+        injector->m_ThState.RestoreState();
     }
 
 protected:
     static int OnTrace(PyObject* self, PyFrameObject* frame,
         int what, PyObject* arg)
     {
-        PyObject* t = PyThreadState_GET()->c_traceobj;
-        assert(t && PyTuple_Check(t));
-        assert(PyTuple_GET_SIZE(t) == 2);
-        Py_INCREF(t);
-        // TODO: recover the old trace
-        PyEval_SetTrace(nullptr, nullptr);
-
-        PyObject* capsule = PyTuple_GET_ITEM(t, 0);
-        auto wrapper = static_cast<TArgWrapper*>(PyCapsule_GetPointer(capsule, CAPSULE_NAME));
+        PyObject* capsule = PyThreadState_GET()->c_traceobj;
+        assert(capsule && PyCapsule_CheckExact(capsule));
+        Py_INCREF(capsule);
+        auto wrapper = CArgWrapper::RestoreFromCapsule(capsule);
         assert(wrapper != nullptr);
-        PyObject* startTime = PyTuple_GET_ITEM(t, 1);
-        PyObject* res = PyObject_CallFunction(wrapper->self->m_Callback, "(d)", startTime);
-        Py_DECREF(t);
+        // recover the old trace
+        PyEval_SetTrace(wrapper->tracefunc, wrapper->pyTraceobj);
+
+        PyObject* pyStartTime = wrapper->pyStartTime;
+        PyObject* res = PyObject_CallFunction(wrapper->injector->m_Callback, "(d)", pyStartTime);
+        Py_DECREF(capsule);
         if (res == nullptr)
         {
             return -1;
         }
         Py_DECREF(res);
         return 0;
-    }
-
-private:
-    static void DeleteCapsule(PyObject* obj)
-    {
-        auto _wrapper = static_cast<TArgWrapper*>(PyCapsule_GetPointer(obj, CAPSULE_NAME));
-        delete _wrapper;
     }
 
 private:
@@ -253,6 +381,29 @@ private:
     mutable std::mutex m_Mutex;
 };
 
+#ifdef WITH_THREAD
+class CAttacher
+{
+private:
+    CAttacher()
+    {
+    }
+
+public:
+    static CAttacher& Instance()
+    {
+        static CAttacher instance;
+        return instance;
+    }
+
+    static void Attach(const std::shared_ptr<CLocalInjector>& injector)
+    {
+        CGILHolder gil;
+        CLocalInjector::Call(injector);
+    }
+};
+
+#else
 class CAttacher
 {
 private:
@@ -317,6 +468,8 @@ private:
     CInjectorQueue m_Queue;
     std::atomic<bool> m_Appended;
 };
+
+#endif // WITH_THREAD
 
 class CContextHelper
 {
@@ -479,7 +632,7 @@ private:
     std::vector<CLocalInjector*> m_DelVect;
 };
 
-
+#ifdef WITH_THREAD
 static int GetPyThreadIndex()
 {
     auto state = PyThreadState_GET();
@@ -495,6 +648,8 @@ static int GetPyThreadIndex()
     assert(index != -1);
     return index;
 }
+#endif // WITH_THREAD
+
 
 struct PyInjector
 {
@@ -630,6 +785,9 @@ PyMODINIT_FUNC PyInit__xtimeout()
     {
         return nullptr;
     }
+#ifdef WITH_THREAD
+    PyEval_InitThreads();
     g_PyTLSKey = GetPyThreadIndex();
+#endif
     return m;
 }

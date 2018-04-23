@@ -4,3 +4,5 @@
 Debug
 dist
 build
+xtimeout.egg-info
+*.pyd
