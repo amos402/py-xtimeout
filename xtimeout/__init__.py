@@ -1,6 +1,11 @@
 import functools
-
-from _xtimeout import Injector
+try:
+    from _xtimeout import Injector
+except Exception as e:
+    print(e)
+    import sys
+    print(sys.path)
+    input('xxxx')
 
 __version__ = "0.2.0"
 __all__ = ["check_context", "check_time", "Injector"]
@@ -16,6 +21,9 @@ class check_context(object):
 
     def __exit__(self, exc_type, exc_value, tb):
         self._injector.stop()
+
+    def reset(self):
+        self._injector.reset()
 
 
 def check_time(timeout, callback):

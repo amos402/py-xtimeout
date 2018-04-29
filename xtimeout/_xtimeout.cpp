@@ -257,6 +257,11 @@ public:
         assert(!m_IsValid);
     }
 
+    PyObject* GetCallback() const
+    {
+        return m_Callback;
+    }
+
     void SetCallback(PyObject* func)
     {
         Py_XSETREF(m_Callback, func);
@@ -266,6 +271,11 @@ public:
     void SetDuration(uint32_t nMilliSec)
     {
         m_Duration = std::chrono::milliseconds(nMilliSec);
+    }
+
+    void SetDuration(std::chrono::milliseconds millisec)
+    {
+        m_Duration = millisec;
     }
 
     std::chrono::milliseconds GetDuration() const
@@ -296,6 +306,10 @@ public:
 
     static void Call(const std::shared_ptr<CLocalInjector>& injector)
     {
+        if (!injector->IsValid())
+        {
+            return;
+        }
         // wrap a injector ptr to keep its reference count
         auto wrapper = CArgWrapper::Create(injector);
         double startTime = _PyTime_AsSecondsDouble(
@@ -330,7 +344,12 @@ protected:
         PyEval_SetTrace(wrapper->tracefunc, wrapper->pyTraceobj);
 
         PyObject* pyStartTime = wrapper->pyStartTime;
-        PyObject* res = PyObject_CallFunction(wrapper->injector->m_Callback, "(d)", pyStartTime);
+        PyObject* callback = wrapper->injector->GetCallback();
+        if (!wrapper->injector->IsValid())
+        {
+            return 0;
+        }
+        PyObject* res = PyObject_CallFunction(callback, "(d)", pyStartTime);
         Py_DECREF(capsule);
         if (res == nullptr)
         {
@@ -705,11 +724,36 @@ static PyObject* InjectorStop(PyObject* self, PyObject* args)
     Py_RETURN_NONE;
 }
 
+static PyObject* InjectorReset(PyObject* self)
+{
+    auto pyInjector = reinterpret_cast<PyInjector*>(self);
+    auto& injector = pyInjector->injector;
+    PyObject* callback = injector->GetCallback();
+    Py_XINCREF(callback);
+    auto time = injector->GetDuration();
+    injector->Release();
+
+    // replace the injector
+    injector = std::make_shared<CLocalInjector>();
+    injector->SetCallback(callback);
+    injector->SetDuration(time);
+    injector->RecordStartTime();
+    CContextHelper::Instance().Start(injector);
+
+    Py_XDECREF(callback);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef injector_methods[] = {
-    { "start", (PyCFunction)InjectorStart, METH_NOARGS, "" },
-    { "stop", (PyCFunction)InjectorStop, METH_NOARGS, "" },
+    { "start", (PyCFunction)InjectorStart, METH_NOARGS, nullptr },
+    { "stop", (PyCFunction)InjectorStop, METH_NOARGS, nullptr },
+    { "reset", (PyCFunction)InjectorReset, METH_NOARGS, nullptr },
     {nullptr, nullptr}
 };
+
+PyDoc_STRVAR(injector_doc,
+"Injector(time: int, callback: callable)\n"
+"time unit: milliseconds");
 
 static PyTypeObject injector_type = {
     PyVarObject_HEAD_INIT(0, 0)                 /* Must fill in type value later */
@@ -732,7 +776,7 @@ static PyTypeObject injector_type = {
     0,                                          /* tp_setattro */
     0,                                          /* tp_as_buffer */
     Py_TPFLAGS_DEFAULT,                         /* tp_flags */
-    0,                                          /* tp_doc */
+    injector_doc,                               /* tp_doc */
     0,                                          /* tp_traverse */
     0,                                          /* tp_clear */
     0,                                          /* tp_richcompare */

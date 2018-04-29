@@ -117,6 +117,20 @@ class TestMonitor(unittest.TestCase):
         finally:
             sys.settrace(old_trace)
 
+    def test_reset(self):
+        def ont_time(start_time):
+            raise TimeoutError
+
+        count = 0
+        with self.assertRaises(TimeoutError):
+            with xtimeout.check_context(250, ont_time) as context:
+                for i in range(1, 5):
+                    count = i
+                    # timeout on 300ms
+                    busy(0.1 * i)
+                    context.reset()
+        self.assertEqual(count, 3)
+
 
 @unittest.skipIf(not thread_enabled, "no threading")
 class TestMultiThread(unittest.TestCase):
