@@ -1,11 +1,6 @@
 import functools
-try:
-    from _xtimeout import Injector
-except Exception as e:
-    print(e)
-    import sys
-    print(sys.path)
-    input('xxxx')
+
+from _xtimeout import Injector
 
 __version__ = "0.2.0"
 __all__ = ["check_context", "check_time", "Injector"]
