@@ -7,7 +7,7 @@
 * The timeout callback and function call are on the same thread.
 * Multi-thread support. Nest call support.
 
-## Intallation
+## Installation
 ```
 pip install xtimeout
 ```
