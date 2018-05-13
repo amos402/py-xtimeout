@@ -29,6 +29,7 @@ typedef std::chrono::steady_clock ClockType;
 static const auto INTERVAL_RESOLUTION = std::chrono::milliseconds(5);
 
 static int g_PyTLSKey = -1;
+static long g_MainThreadId;
 
 
 static void AccurateSleep(unsigned long nMilliseconds)
@@ -55,12 +56,31 @@ static void AccurateSleep(unsigned long nMilliseconds)
 #endif // _WIN32
 }
 
+
+static inline long GetCurThreadId()
+{
+#ifdef WIN32
+    return (long)GetCurrentThreadId();
+#else
+    return (long)pthread_self();
+#endif // WIN32
+
+}
+
+static PyObject* TimePointToPyFloat(const std::chrono::time_point<ClockType>& time)
+{
+    auto startNs = std::chrono::duration_cast<std::chrono::nanoseconds>(time.time_since_epoch());
+    double pyTime = _PyTime_AsSecondsDouble(startNs.count());
+    return PyFloat_FromDouble(pyTime);
+}
+
 class CThreadState
 {
 public:
     CThreadState(PyThreadState* state)
         : m_State(state), m_PrevState(nullptr)
     {
+        m_IsMainThread = g_MainThreadId == GetCurThreadId();
     }
 
     void SwapState()
@@ -86,9 +106,15 @@ public:
         m_PrevState = nullptr;
     }
 
+    bool IsMainThread() const
+    {
+        return m_IsMainThread;
+    }
+
 private:
     PyThreadState* m_State;
     PyThreadState* m_PrevState;
+    bool m_IsMainThread;
 };
 
 #ifdef WITH_THREAD
@@ -204,23 +230,29 @@ class CLocalInjector
 private:
     using TimePoint = std::chrono::time_point<ClockType>;
 
-    class CArgWrapper
+    class CFastArgWrapper
     {
-    private:
-        CArgWrapper(const std::shared_ptr<CLocalInjector>& obj)
-            : injector(obj), tracefunc(nullptr)
+    public:
+        CFastArgWrapper(const std::shared_ptr<CLocalInjector>& obj)
+            : injector(obj)
         {
         }
 
-        ~CArgWrapper()
+        std::shared_ptr<CLocalInjector> injector;
+    };
+
+
+    class CArgWrapper : public CFastArgWrapper
+    {
+    private:
+        CArgWrapper(const std::shared_ptr<CLocalInjector>& obj)
+            : CFastArgWrapper(obj), tracefunc(nullptr)
         {
         }
 
     public:
-        std::shared_ptr<CLocalInjector> injector;
         Py_tracefunc tracefunc;
         CPyObjectHolder pyTraceobj;
-        CPyObjectHolder pyStartTime;
 
         static CArgWrapper* Create(const std::shared_ptr<CLocalInjector>& obj)
         {
@@ -293,6 +325,11 @@ public:
         return m_StartTime;
     }
 
+    bool IsMainThreadInjector() const
+    {
+        return m_ThState.IsMainThread();
+    }
+
     void Release()
     {
         m_IsValid = false;
@@ -304,6 +341,20 @@ public:
         return m_IsValid;
     }
 
+    static void FastCall(const std::shared_ptr<CLocalInjector>& injector)
+    {
+        if (!injector->IsValid())
+        {
+            return;
+        }
+
+        int res = Py_AddPendingCall(OnFastTrace, new CFastArgWrapper(injector));
+        if (res == -1)
+        {
+            // TODO: if add pending failed, add it after some pending calls called
+        }
+    }
+
     static void Call(const std::shared_ptr<CLocalInjector>& injector)
     {
         if (!injector->IsValid())
@@ -312,16 +363,12 @@ public:
         }
         // wrap a injector ptr to keep its reference count
         auto wrapper = CArgWrapper::Create(injector);
-        double startTime = _PyTime_AsSecondsDouble(
-            injector->m_StartTime.time_since_epoch().count());
         injector->m_ThState.SwapState();
 
         auto state = PyThreadState_GET();
         wrapper->tracefunc = state->c_tracefunc;
         Py_XINCREF(state->c_traceobj);
         wrapper->pyTraceobj = state->c_traceobj;
-        wrapper->pyStartTime = PyFloat_FromDouble(startTime);
-
         const auto capsule = wrapper->CreateCapsule();
         if (!capsule)
         {
@@ -332,6 +379,28 @@ public:
     }
 
 protected:
+    static int OnFastTrace(void* arg)
+    {
+        auto wrapper = reinterpret_cast<CFastArgWrapper*>(arg);
+        auto &injector = wrapper->injector;
+        if (!injector->IsValid())
+        {
+            delete wrapper;
+            return 0;
+        }
+        PyObject* callback = injector->GetCallback();
+        assert(callback);
+        PyObject* pyStartTime = TimePointToPyFloat(injector->m_StartTime);
+        PyObject* res = PyObject_CallFunction(callback, "O", pyStartTime);
+        delete wrapper;
+        if (res == nullptr)
+        {
+            return -1;
+        }
+        Py_DECREF(res);
+        return 0;
+    }
+
     static int OnTrace(PyObject* self, PyFrameObject* frame,
         int what, PyObject* arg)
     {
@@ -343,7 +412,7 @@ protected:
         // recover the old trace
         PyEval_SetTrace(wrapper->tracefunc, wrapper->pyTraceobj);
 
-        PyObject* pyStartTime = wrapper->pyStartTime;
+        PyObject* pyStartTime = TimePointToPyFloat(wrapper->injector->m_StartTime);
         PyObject* callback = wrapper->injector->GetCallback();
         if (!wrapper->injector->IsValid())
         {
@@ -417,8 +486,15 @@ public:
 
     static void Attach(const std::shared_ptr<CLocalInjector>& injector)
     {
-        CGILHolder gil;
-        CLocalInjector::Call(injector);
+        if (injector->IsMainThreadInjector())
+        {
+            CLocalInjector::FastCall(injector);
+        }
+        else
+        {
+            CGILHolder gil;
+            CLocalInjector::Call(injector);
+        }
     }
 };
 
@@ -832,6 +908,8 @@ PyMODINIT_FUNC PyInit__xtimeout()
 #ifdef WITH_THREAD
     PyEval_InitThreads();
     g_PyTLSKey = GetPyThreadIndex();
+    PyInterpreterState* interpreter = PyInterpreterState_Head();
+    g_MainThreadId = interpreter->tstate_head->thread_id;
 #endif
     return m;
 }
