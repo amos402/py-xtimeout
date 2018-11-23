@@ -6,7 +6,7 @@ with open('README.rst', encoding='utf8') as f:
 
 setup(
     name='xtimeout',
-    version='0.2.0',
+    version='0.3.1',
     description='Trace a timeout function call and handle with it',
     long_description=long_description,
     author='amos402',
