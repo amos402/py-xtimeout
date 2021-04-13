@@ -1,6 +1,15 @@
-#include "Python.h"
-#include "pythread.h"
-#include "frameobject.h"
+#define NOMINMAX
+#define Py_BUILD_CORE_MODULE
+#include <Python.h>
+#include <pythread.h>
+#include <pystate.h>
+#include <frameobject.h>
+
+#if (PY_MINOR_VERSION == 8)
+#include <internal/pycore_pystate.h>
+#elif (PY_MINOR_VERSION >= 9)
+#include <internal/pycore_interp.h>
+#endif
 
 #include <cassert>
 #include <chrono>
@@ -19,7 +28,6 @@
 #include <time.h>
 
 #ifdef _WIN32
-#define NOMINMAX
 #include <windows.h>
 #include <mmsystem.h>
 #pragma comment(lib, "Winmm.lib")
