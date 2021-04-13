@@ -3,20 +3,20 @@
 #include "frameobject.h"
 
 #include <cassert>
-#include <vector>
-#include <queue>
-#include <unordered_map>
-#include <memory>
 #include <chrono>
 #include <functional>
+#include <memory>
+#include <queue>
+#include <unordered_map>
+#include <vector>
 
+#include <atomic>
+#include <condition_variable>
 #include <thread>
 #include <mutex>
-#include <condition_variable>
-#include <atomic>
 
-#include <time.h>
 #include <climits>
+#include <time.h>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -577,7 +577,10 @@ private:
 public:
     ~CContextHelper()
     {
-        m_IsQuit = true;
+        {
+            std::lock_guard<std::mutex> lock(m_Mtx);
+            m_IsQuit = true;
+        }
         m_RunCond.notify_all();
         m_CheckTh.join();
     }
@@ -627,7 +630,7 @@ protected:
     {
         while (!m_IsQuit)
         {
-            std::unique_lock<std::mutex> lock(m_Mtx);
+            
 #ifdef WIN32
             timeBeginPeriod(1);
 #endif // WIN32
@@ -675,7 +678,11 @@ protected:
 #ifdef WIN32
             timeEndPeriod(1);
 #endif // WIN32
-            m_RunCond.wait(lock);
+            if (!m_IsQuit)
+            {
+                std::unique_lock<std::mutex> lock(m_Mtx);
+                m_RunCond.wait(lock);
+            }
         }
     }
 
