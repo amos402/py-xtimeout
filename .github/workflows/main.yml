@@ -1,0 +1,34 @@
+name: GitHub Actions
+
+on: [ pull_request, push ]
+
+jobs:
+  build-test:
+    name: Build and Test
+    runs-on: ${{ matrix.os }}-latest
+    timeout-minutes: 5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows, ubuntu, macos]
+        python: ["3.6", "3.7", "3.8", "3.9"]
+        platform: [x64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: ${{ matrix.platform }}
+
+      - name: Build and Install
+        run: |
+          pip install -v .
+          pip install pytest
+
+      - name: Run Tests
+        run: pytest
